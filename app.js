@@ -802,18 +802,96 @@
     const cellB = state.cells.find((c) => c.key === keyB);
     if (!cellA || !cellB) return;
 
-    // spanが異なる場合（大画像同士でない交換）は、位置のみ交換すると
-    // 重なりが発生し得るため、spanが一致する場合のみ単純交換を許可。
-    // span不一致の場合は交換不可としてお知らせする（安全策）。
-    if (cellA.span !== cellB.span) {
-      pdfStatusFlash("サイズの異なる升目同士は入れ替えできません（同じ大きさ同士でお試しください）。");
+    // ---- 同サイズ同士：位置をそのまま交換 ----
+    if (cellA.span === cellB.span) {
+      const tmpRow = cellA.row, tmpCol = cellA.col;
+      cellA.row = cellB.row; cellA.col = cellB.col;
+      cellB.row = tmpRow; cellB.col = tmpCol;
       refreshAllCellPositions();
       return;
     }
 
-    const tmpRow = cellA.row, tmpCol = cellA.col;
-    cellA.row = cellB.row; cellA.col = cellB.col;
-    cellB.row = tmpRow; cellB.col = tmpCol;
+    // ---- 異サイズ：dragした側がどちらか判定 ----
+    // keyA = ドラッグ元、keyB = ドロップ先
+    const dragCell = cellA; // onPointerDownで記録したdragCtx.keyがkeyA
+    const dropCell = cellB;
+
+    // 1×1 → 2×2 はサポート外
+    if (dragCell.span === 1 && dropCell.span === 2) {
+      pdfStatusFlash("小さい升目から大きい升目への入れ替えはできません（大きい升目からドラッグしてください）。");
+      refreshAllCellPositions();
+      return;
+    }
+
+    // ---- 2×2 → 1×1 の交換 ----
+    // ドロップ先の1×1セルを左上とする2×2範囲の4枚と交換する。
+    // ただし範囲がグリッド外にはみ出す場合は左上座標をクランプする。
+    const bigCell = dragCell;   // span=2（ドラッグ元）
+    const dropSmall = dropCell; // span=1（ドロップ先）
+    const n = state.n;
+
+    // ドロップ先を左上にした2×2の左上座標（グリッド内に収まるようクランプ）
+    const newBigRow = Math.min(dropSmall.row, n - 2);
+    const newBigCol = Math.min(dropSmall.col, n - 2);
+
+    // その2×2範囲に含まれる1×1セルを全て収集
+    // （2×2セルが入っていたらその交換は不可）
+    const targetSmalls = [];
+    for (let dr = 0; dr < 2; dr++) {
+      for (let dc = 0; dc < 2; dc++) {
+        const r = newBigRow + dr;
+        const c = newBigCol + dc;
+        // この座標を占有しているセルを探す
+        const found = state.cells.find((cell) => {
+          if (cell.key === bigCell.key) return false; // ドラッグ元自身は除外
+          if (cell.span === 2) {
+            // 2×2セルが占める4マスをチェック
+            return r >= cell.row && r < cell.row + 2 &&
+                   c >= cell.col && c < cell.col + 2;
+          }
+          return cell.row === r && cell.col === c;
+        });
+        if (found && found.span === 2) {
+          // 2×2セル同士の交換になってしまう場合はそちらに委ねる（通常の交換）
+          const tmpRow = bigCell.row, tmpCol = bigCell.col,
+                tmpSpan = bigCell.span;
+          bigCell.row = found.row; bigCell.col = found.col;
+          found.row = tmpRow; found.col = tmpCol;
+          refreshAllCellPositions();
+          return;
+        }
+        if (found && !targetSmalls.some((s) => s.key === found.key)) {
+          targetSmalls.push(found);
+        }
+      }
+    }
+
+    // 2×2範囲にちょうど4枚の1×1が揃っていない場合は中止
+    if (targetSmalls.length !== 4) {
+      pdfStatusFlash("2×2範囲に別のサイズの升目が含まれているため入れ替えできません。");
+      refreshAllCellPositions();
+      return;
+    }
+
+    // 元の2×2の位置（4マス分）に4枚の1×1を配置する
+    const oldBigRow = bigCell.row;
+    const oldBigCol = bigCell.col;
+    const positions = [
+      { r: oldBigRow,     c: oldBigCol     },
+      { r: oldBigRow,     c: oldBigCol + 1 },
+      { r: oldBigRow + 1, c: oldBigCol     },
+      { r: oldBigRow + 1, c: oldBigCol + 1 },
+    ];
+    targetSmalls.forEach((cell, i) => {
+      cell.row = positions[i].r;
+      cell.col = positions[i].c;
+      // span は 1 のまま
+    });
+
+    // 2×2セルをドロップ先の2×2範囲へ移動
+    bigCell.row = newBigRow;
+    bigCell.col = newBigCol;
+    // span は 2 のまま
 
     refreshAllCellPositions();
   }
