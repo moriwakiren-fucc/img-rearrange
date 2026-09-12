@@ -750,14 +750,61 @@
     // ドロップ先ハイライト
     clearDropTargetHighlight();
     const targetDiv = findCellUnderPoint(e.clientX, e.clientY, dragCtx.div);
-    if (targetDiv) targetDiv.classList.add("drop-target");
+    if (targetDiv) {
+      const dragCell = state.cells.find((c) => c.key === dragCtx.key);
+      const dropCell = state.cells.find((c) => c.key === targetDiv.dataset.key);
+      // 2×2→1×1のとき: ドロップ先を左上とする2×2範囲の4マスをまとめてハイライト
+      if (dragCell && dropCell && dragCell.span === 2 && dropCell.span === 1) {
+        const n = stageGeom.n;
+        const baseRow = Math.min(dropCell.row, n - 2);
+        const baseCol = Math.min(dropCell.col, n - 2);
+        gridStage.querySelectorAll(".cell").forEach((div) => {
+          const cell = state.cells.find((c) => c.key === div.dataset.key);
+          if (!cell || cell.key === dragCtx.key) return;
+          if (cell.span === 1 &&
+              cell.row >= baseRow && cell.row < baseRow + 2 &&
+              cell.col >= baseCol && cell.col < baseCol + 2) {
+            div.classList.add("drop-target");
+          }
+        });
+      } else {
+        targetDiv.classList.add("drop-target");
+      }
+    }
   }
 
   function findCellUnderPoint(clientX, clientY, excludeDiv) {
-    const els = document.elementsFromPoint(clientX, clientY);
-    for (const el of els) {
-      if (el.classList && el.classList.contains("cell") && el !== excludeDiv) {
-        return el;
+    // ポインタ座標をグリッド内セル座標(row,col)に変換してstate.cellsから直接検索する。
+    // DOMのz-index順に依存しないため、2×2セルが上に重なっていても
+    // その下の1×1セルを正しく検出できる。
+    const stageRect = gridStage.getBoundingClientRect();
+    const { cellW, cellH, stageW, stageH } = stageGeom;
+    const localX = clientX - stageRect.left;
+    const localY = clientY - stageRect.top;
+
+    if (localX < 0 || localY < 0 || localX >= stageW || localY >= stageH) {
+      return null;
+    }
+
+    const col = Math.floor(localX / cellW);
+    const row = Math.floor(localY / cellH);
+
+    const excludeKey = excludeDiv ? excludeDiv.dataset.key : null;
+    const dragCell = excludeKey ? state.cells.find((c) => c.key === excludeKey) : null;
+    const dragSpan = dragCell ? dragCell.span : 1;
+
+    // 2×2をドラッグ中は1×1を優先して検出する
+    const spanOrder = dragSpan === 2 ? [1, 2] : [2, 1];
+
+    for (const span of spanOrder) {
+      const found = state.cells.find((cell) => {
+        if (cell.key === excludeKey) return false;
+        if (cell.span !== span) return false;
+        return row >= cell.row && row < cell.row + cell.span &&
+               col >= cell.col && col < cell.col + cell.span;
+      });
+      if (found) {
+        return gridStage.querySelector('[data-key="' + found.key + '"]');
       }
     }
     return null;
