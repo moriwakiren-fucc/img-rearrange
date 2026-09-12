@@ -72,7 +72,6 @@
   const shuffleBtn = $("shuffleBtn");
   const downloadPdfBtn = $("downloadPdfBtn");
   const pdfStatus = $("pdfStatus");
-  const downloadJpgBtn = $("downloadJpgBtn");
   const paperSizeSelect = $("paperSize");
 
   /* ============================================================
@@ -501,8 +500,13 @@
       }
     }
 
-    // 処理順は左上から行優先（隙間なく左上から敷き詰める）
-    emptyCells.sort((a, b) => a.r !== b.r ? a.r - b.r : a.c - b.c);
+    // 処理順は中心から外側へ（見た目のバランスが良くなりやすい）
+    const centerR = (n - 1) / 2, centerC = (n - 1) / 2;
+    emptyCells.sort((a, b) => {
+      const da = Math.hypot(a.r - centerR, a.c - centerC);
+      const db = Math.hypot(b.r - centerR, b.c - centerC);
+      return da - db;
+    });
 
     function neighborsOf(r, c) {
       return [
@@ -956,38 +960,30 @@
      PDF書き出し（高画質・チャンク処理でクラッシュ回避）
      ============================================================ */
 
-  async function runExport(fn, busyMsg, doneMsg, errMsg) {
+  downloadPdfBtn.addEventListener("click", async () => {
     if (!state.cells.length) return;
     downloadPdfBtn.disabled = true;
-    downloadJpgBtn.disabled = true;
     shuffleBtn.disabled = true;
     pdfStatus.classList.remove("err");
-    pdfStatus.textContent = busyMsg;
+    pdfStatus.textContent = "PDFを作成しています…";
+
     try {
-      await fn();
-      pdfStatus.textContent = doneMsg;
+      await exportToPdf();
+      pdfStatus.textContent = "PDFのダウンロードが完了しました。";
     } catch (e) {
       console.error(e);
-      pdfStatus.textContent = errMsg;
+      pdfStatus.textContent = "PDF作成中にエラーが発生しました。もう一度お試しください。";
       pdfStatus.classList.add("err");
     } finally {
       downloadPdfBtn.disabled = false;
-      downloadJpgBtn.disabled = false;
       shuffleBtn.disabled = false;
     }
-  }
+  });
 
-  downloadPdfBtn.addEventListener("click", () =>
-    runExport(exportToPdf, "PDFを作成しています…", "PDFのダウンロードが完了しました。", "PDF作成中にエラーが発生しました。もう一度お試しください。")
-  );
-
-  downloadJpgBtn.addEventListener("click", () =>
-    runExport(exportToJpg, "JPGを作成しています…", "JPGのダウンロードが完了しました。", "JPG作成中にエラーが発生しました。もう一度お試しください。")
-  );
-
-  // 共通キャンバス描画（PDF・JPG両方から利用）
-  async function renderToCanvas() {
+  async function exportToPdf() {
     const paper = PAPER_SIZES[state.paperKey];
+    // キャンバス総ピクセル数が大きくなりすぎないよう、枚数が多いときはDPIを少し落とす
+    // （ブラウザによっては巨大canvasでメモリエラーになるため安全策）
     const cellCount = state.cells.length;
     let dpi = PDF_EXPORT_DPI;
     if (cellCount > 300) dpi = 130;
@@ -998,6 +994,7 @@
     const pageWpx = Math.round(paper.w * mmToPx);
     const pageHpx = Math.round(paper.h * mmToPx);
 
+    // 大きな一枚キャンバスに全セルを描画してからPDFに埋め込む
     const canvas = document.createElement("canvas");
     canvas.width = pageWpx;
     canvas.height = pageHpx;
@@ -1029,12 +1026,10 @@
         await idleWait();
       }
     }
-    await nextFrame();
-    return { canvas, paper };
-  }
 
-  async function exportToPdf() {
-    const { canvas, paper } = await renderToCanvas();
+    await nextFrame();
+
+    // jsPDF に反映
     const orientation = paper.w >= paper.h ? "l" : "p";
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({
@@ -1043,17 +1038,10 @@
       format: [paper.w, paper.h],
       compress: true,
     });
+
     const imgData = canvas.toDataURL("image/jpeg", 0.92);
     pdf.addImage(imgData, "JPEG", 0, 0, paper.w, paper.h, undefined, "FAST");
     pdf.save(`台紙_${paper.label.replace(/\s/g, "")}.pdf`);
-  }
-
-  async function exportToJpg() {
-    const { canvas, paper } = await renderToCanvas();
-    const link = document.createElement("a");
-    link.download = `台紙_${paper.label.replace(/\s/g, "")}.jpg`;
-    link.href = canvas.toDataURL("image/jpeg", 0.92);
-    link.click();
   }
 
   // object-fit: cover 相当の描画
